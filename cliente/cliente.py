@@ -1,72 +1,111 @@
 from socket import *
 import struct
+import os
 
-server = ('127.0.0.1',12000)
-clientSocket = socket(AF_INET,SOCK_DGRAM)
+server_addr = ('127.0.0.1', 12000)
+clientSocket = socket(AF_INET, SOCK_DGRAM)
 
-FORMAT = "!II?H8s1400s"
-PACKGE_SIZE = 1400
+# FORMATOS GLOBAIS
+FORMATO_ARQUIVO = "!II?H8s1400s" # 1419 bytes
+FORMATO_CONTROLE = "!BIH8s256s"  # 271 bytes
+TAM_CHUNK = 1400
 
-#!: Network Order
-#B: Tipo da mensagem (1 byte).
-#I: ID do Arquivo (4 bytes).
-#H: Tamanho real da mensagem (2 bytes).
-#8s: Extensão (8 bytes) - <-- O campo novo aqui!
-#256s: A mensagem de texto (256 bytes).
-#Total: 1 + 4 + 2 + 8 + 256 = 271 bytes.
-FORMAT2 = "!BIH8s256s"
-dicionarioGlobal = {}
+def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
+    try:
+        tamanho_total = os.path.getsize(caminho_arquivo)
+    except FileNotFoundError:
+        print(f"Erro: Arquivo '{caminho_arquivo}' não encontrado.")
+        sock.sendto(b"ERRO: Arquivo nao encontrado no remetente", destino_addr)
+        return False
 
-while (True):
-    msg = input("Escreva uma mensagem ou 'fecha': ")
+    ext_bytes = extensao.encode('utf-8')
+    num_seq = 0
+
+    with open(caminho_arquivo, "rb") as f:
+        while True:
+            dados = f.read(TAM_CHUNK)
+            if not dados:
+                break
+            
+            tam_real = len(dados)
+            eh_ultimo = f.tell() >= tamanho_total
+            dados_completos = dados.ljust(TAM_CHUNK, b'\x00')
+            num_seq += 1
+            pacote = struct.pack(FORMATO_ARQUIVO, id_arquivo, num_seq, eh_ultimo, tam_real, ext_bytes, dados_completos)
+            sock.sendto(pacote, destino_addr)
+            
+            print(f"Pacote {num_seq} com {tam_real} bytes enviado\n")
+            
+    print(f"[>] Arquivo '{caminho_arquivo}' enviado com sucesso!")
+    return True
+
+def receber_arquivo(sock, id_esperado, pasta_destino, nome_original):
+    buffer_pacotes = {}
+    extensao_final = "bin"
+
+    print(f"[<] Aguardando dados do arquivo ID {id_esperado}...")
     
-    if msg == "fecha": 
+    while True:
+        dados, addr = sock.recvfrom(2048)
+        
+        if len(dados) < 1419:
+            msg = dados.decode('utf-8', errors='ignore')
+            print(f"[!] Mensagem do outro lado: {msg}")
+            if "ERRO" in msg:
+                return False
+            continue
+            
+        id_arq, seq, eh_ultimo, tam_real, ext_bytes, payload = struct.unpack(FORMATO_ARQUIVO, dados)
+        
+        if id_arq != id_esperado:
+            continue
+            
+        extensao_final = ext_bytes.decode('utf-8').strip('\x00')
+        buffer_pacotes[seq] = payload[:tam_real]
+        print(f"Pacote {seq} com {tam_real} bytes recebido\n")
+        
+        if eh_ultimo:
+            break
+
+
+    nome_final = f"{pasta_destino}/{nome_original}.{extensao_final}"
+    with open(nome_final, "wb") as f:
+        for s in sorted(buffer_pacotes.keys()):
+            f.write(buffer_pacotes[s])
+            
+    print(f"[V] Download completo: {nome_final}")
+    return True
+
+while True:
+    comando = input("\nO que deseja fazer?\n[1] POST (Enviar)\n[2] GET (Receber)\n[0] Sair\nEscolha: ")
+    
+    if comando == '0':
         break
         
-    extensao = input("Escolha uma extensao (txt, png, etc): ")
-    tipo = int(input("Escolha uma função (POST = 1 /// GET = 2): "))
-    idArquivo = int(input("Id do arquivo: "))
+    tipo = int(comando)
+    id_arquivo = int(input("ID do arquivo (Ex: 10): "))
+    nome = input("Nome do arquivo (sem extensão): ")
+    extensao = input("Extensão (Ex: txt, png): ")
     
-    extensaoBytes = extensao.encode('utf-8').ljust(8, b'\x00')
-    msgBytes = msg.encode('utf-8')
-    tamRealMsg = len(msgBytes)
+    ext_bytes = extensao.encode('utf-8')
+    nome_bytes = nome.encode('utf-8')
+    tam_real = len(nome_bytes)
+    nome_pad = nome_bytes[:256].ljust(256, b'\x00')
     
-    msgCompletada = msgBytes[:256].ljust(256, b'\x00')
+    pacote_req = struct.pack(FORMATO_CONTROLE, tipo, id_arquivo, tam_real, ext_bytes, nome_pad)
+    clientSocket.sendto(pacote_req, server_addr)
     
-    pacote = struct.pack(FORMAT2, tipo, idArquivo, tamRealMsg, extensaoBytes, msgCompletada)
-    clientSocket.sendto(pacote, server)
-    
-    # Aguarda resposta (pode ser arquivo ou erro)
-    while (True):
+    if tipo == 1:
+        print("Aguardando autorização do servidor...")
         resp, addr = clientSocket.recvfrom(2048)
         
-        # Se for mensagem pequena, é erro 
-        if len(resp) < 1419:
-            print(f"Resposta servidor: {resp.decode()}")
-            break
-        
-        # Se for pacote grande, desempacota como arquivo
-        idArquivo, cont, ehUltimo, tamReal, tipo, dadosCompletos = struct.unpack(FORMAT, resp)
-        extensaoLimpa = tipo.decode('utf-8').strip('\x00')    
-        
-        if idArquivo not in dicionarioGlobal:
-            dicionarioGlobal[idArquivo] = {}
-            
-        dicionarioGlobal[idArquivo][cont] = dadosCompletos[:tamReal]
-        print(f"Recebi pacote {cont}/{cont if ehUltimo else '?'} - Tipo: {extensaoLimpa}")
-        
-        if ehUltimo:
-            nomeFinal = f"{msg}.{extensaoLimpa}"
-            with open("cliente/"+nomeFinal, "wb") as f:
-                for s in sorted(dicionarioGlobal[idArquivo].keys()):
-                    f.write(dicionarioGlobal[idArquivo][s])
-            
-            print(f"✓ Arquivo '{nomeFinal}' salvo com sucesso!")
-            del dicionarioGlobal[idArquivo]
-            break
-            
-    if msg == "fecha": break
+        if resp == b"OK_READY":
+            caminho_local = f"cliente/{nome}.{extensao}"
+            enviar_arquivo(clientSocket, server_addr, caminho_local, id_arquivo, extensao)
+        else:
+            print(f"Erro ou recusa do servidor: {resp.decode()}")
+
+    elif tipo == 2:
+        receber_arquivo(clientSocket, id_arquivo, "cliente", nome)
 
 clientSocket.close()
-
-
