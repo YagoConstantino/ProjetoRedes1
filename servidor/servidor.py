@@ -1,17 +1,3 @@
-"""
-servidor.py — Servidor UDP para Transferência de Arquivos Confiável
-Disciplina: Redes de Computadores
-
-Melhorias implementadas nesta versão:
-  ✅ Handshake GET: servidor envia HELLO, aguarda HELLO-ACK antes de transmitir dados
-  ✅ Timeout duplo no servidor (emissor): retransmite pacotes automaticamente se não recebe ACK
-  ✅ Tratamento de duplicatas: descarta payload de pacote já recebido, mas reenvia ACK (destravar cliente)
-  ✅ Retransmissão seletiva sob RESEND (NACK) e por timeout próprio
-  ✅ Thread por cliente — paralelismo real sem fila bloqueante
-  ✅ Pipelining: todos os pacotes enviados de uma vez, retransmissão só dos perdidos
-  ✅ Checksum MD5 por segmento
-"""
-
 import socket
 import struct
 import math
@@ -19,9 +5,7 @@ import os
 import hashlib
 from threading import Thread
 
-# ──────────────────────────────────────────────
 #  CONSTANTES DO PROTOCOLO
-# ──────────────────────────────────────────────
 TIPO_POST    = 1   # Cliente quer enviar um arquivo ao servidor
 TIPO_GET     = 2   # Cliente quer baixar um arquivo do servidor
 TIPO_READY   = 3   # Servidor sinaliza pronto para receber upload (POST handshake)
@@ -48,11 +32,7 @@ TIMEOUT_ACK       = 3.0   # Segundos que o servidor espera por ACK antes de retr
 MAX_TENTATIVAS    = 5     # Número máximo de retransmissões automáticas antes de desistir
 TIMEOUT_HANDSHAKE = 5.0   # Segundos aguardando HELLO-ACK do cliente
 
-
-# ──────────────────────────────────────────────
 #  FUNÇÕES AUXILIARES
-# ──────────────────────────────────────────────
-
 def calcular_checksum(dados: bytes) -> bytes:
     """Retorna digest MD5 de 16 bytes — algoritmo de verificação de integridade."""
     return hashlib.md5(dados).digest()
@@ -75,12 +55,8 @@ def montar_pacote_controle(tipo, id_arq, mensagem="", extensao=""):
     tam, msg = empacotar_mensagem(mensagem)
     return struct.pack(FORMATO_CONTROLE, tipo, id_arq, tam, ext, msg)
 
-
-# ──────────────────────────────────────────────
 #  ENVIO DE ARQUIVO — GET: servidor → cliente
 #  Com handshake + pipelining + timeout duplo
-# ──────────────────────────────────────────────
-
 def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
     """
     Protocolo de envio (GET):
@@ -116,12 +92,10 @@ def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
                 ext_bytes, checksum, payload
             )
             sock.sendto(pacote, destino_addr)
-
-    # ══════════════════════════════════════════
+            
     #  FASE 1 — HANDSHAKE GET
     #  Servidor → Cliente: HELLO (avisa que vai enviar)
     #  Cliente → Servidor: HELLO_ACK (confirma que está ouvindo)
-    # ══════════════════════════════════════════
     print(f"[HANDSHAKE] Iniciando handshake GET com {destino_addr} | ID={id_arquivo}")
     pkt_hello = montar_pacote_controle(TIPO_HELLO, id_arquivo)
 
@@ -142,19 +116,15 @@ def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
         sock.settimeout(None)
         return False
 
-    # ══════════════════════════════════════════
     #  FASE 2 — PIPELINING: envia todos os pacotes de uma vez
-    # ══════════════════════════════════════════
     print(f"[TX] Enviando {total_pacotes} pacote(s) em pipeline para {destino_addr} | ID={id_arquivo}")
     for seq in range(1, total_pacotes + 1):
         enviar_pacote(seq)
     print(f"[TX] Pipeline completo. Aguardando ACK ou RESEND...")
 
-    # ══════════════════════════════════════════
     #  FASE 3 — LOOP DE CONFIRMAÇÃO + TIMEOUT DUPLO
     #  - RESEND recebido → retransmissão seletiva imediata
     #  - Timeout → retransmissão automática (timeout do emissor)
-    # ══════════════════════════════════════════
     sock.settimeout(TIMEOUT_ACK)
     tentativas_timeout = 0
 
@@ -204,12 +174,8 @@ def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
     sock.settimeout(None)
     return True
 
-
-# ──────────────────────────────────────────────
 #  RECEPÇÃO DE ARQUIVO — POST: cliente → servidor
 #  Com handshake READY, timeout duplo (receptor) e descarte de duplicatas
-# ──────────────────────────────────────────────
-
 def receber_arquivo(sock, id_esperado, pasta_destino, nome_original, addr_cliente):
     """
     Protocolo de recepção (POST):
@@ -321,18 +287,14 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original, addr_client
         for seq in sorted(buffer_pacotes.keys()):
             f.write(buffer_pacotes[seq])
 
-    print(f"[✓] Arquivo salvo: '{nome_final}' | {len(buffer_pacotes)}/{total_pacotes_esperados} segmentos")
+    print(f"Arquivo salvo: '{nome_final}' | {len(buffer_pacotes)}/{total_pacotes_esperados} segmentos")
 
     # Envia ACK final ao cliente
     pkt_ack = montar_pacote_controle(TIPO_ACK, id_esperado)
     sock.sendto(pkt_ack, addr_cliente)
     return True
 
-
-# ──────────────────────────────────────────────
 #  HANDLER DE REQUISIÇÃO (executa em Thread dedicada)
-# ──────────────────────────────────────────────
-
 def handle_requisicao(tipo, id_arq, nome_arquivo, extensao, addr_cliente):
     """
     Cada requisição ganha sua própria thread + socket UDP exclusivo.
@@ -377,21 +339,15 @@ def handle_requisicao(tipo, id_arq, nome_arquivo, extensao, addr_cliente):
         sock_worker.close()
         print(f"[THREAD] Thread encerrada — ID={id_arq}\n")
 
-
-# ──────────────────────────────────────────────
 #  LOOP PRINCIPAL — Escuta requisições na porta 12000
-# ──────────────────────────────────────────────
-
 os.makedirs(PASTA_SERVIDOR, exist_ok=True)
 
 serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 serverSocket.bind(("", 12000))
 
-print("=" * 60)
 print("  Servidor UDP — Transferência de Arquivos Confiável")
 print("  Porta: 12000  |  Diretório: ./servidor/")
 print("  Protocolo: segmentos 1400B | MD5 | Pipelining | Handshake")
-print("=" * 60)
 print("Aguardando requisições...\n")
 
 while True:

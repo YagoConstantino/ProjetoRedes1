@@ -1,18 +1,3 @@
-"""
-cliente.py — Cliente UDP para Transferência de Arquivos Confiável
-Disciplina: Redes de Computadores
-
-Melhorias implementadas nesta versão:
-  ✅ Handshake GET: aguarda HELLO do servidor, responde HELLO-ACK antes de receber dados
-  ✅ Handshake POST: aguarda READY do servidor antes de enviar dados
-  ✅ Tratamento de duplicatas: se pacote já está no buffer → descarta payload, reenvia ACK
-  ✅ Timeout do receptor (cliente): detecta silêncio/gap e dispara RESEND seletivo
-  ✅ Timeout do emissor (cliente no POST): retransmite automaticamente se não recebe ACK
-  ✅ Simulação de perda: aleatória (%) ou por sequências específicas
-  ✅ Pipelining: envia/recebe todos os pacotes em rajada, retransmite só os perdidos
-  ✅ Checksum MD5 por segmento
-"""
-
 import socket
 import struct
 import math
@@ -20,9 +5,7 @@ import os
 import hashlib
 import random
 
-# ──────────────────────────────────────────────
 #  CONSTANTES DO PROTOCOLO (idênticas ao servidor)
-# ──────────────────────────────────────────────
 TIPO_POST      = 1
 TIPO_GET       = 2
 TIPO_READY     = 3
@@ -42,11 +25,7 @@ TIMEOUT_RX      = 2.0  # Timeout do receptor: detecta gaps/perdas
 TIMEOUT_TX      = 5.0  # Timeout do emissor (POST): aguarda ACK/RESEND
 MAX_TENTATIVAS  = 5    # Limite de retransmissões antes de desistir
 
-
-# ──────────────────────────────────────────────
 #  FUNÇÕES AUXILIARES
-# ──────────────────────────────────────────────
-
 def calcular_checksum(dados: bytes) -> bytes:
     """MD5 do payload — mesmo algoritmo do servidor."""
     return hashlib.md5(dados).digest()
@@ -67,12 +46,8 @@ def montar_pacote_controle(tipo, id_arq, mensagem="", extensao=""):
     tam, msg = empacotar_mensagem(mensagem)
     return struct.pack(FORMATO_CONTROLE, tipo, id_arq, tam, ext, msg)
 
-
-# ──────────────────────────────────────────────
 #  ENVIO DE ARQUIVO — POST: cliente → servidor
 #  Com handshake READY + pipelining + timeout do emissor
-# ──────────────────────────────────────────────
-
 def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
     """
     Protocolo de envio (POST):
@@ -156,12 +131,8 @@ def enviar_arquivo(sock, destino_addr, caminho_arquivo, id_arquivo, extensao):
     sock.settimeout(None)
     return True
 
-
-# ──────────────────────────────────────────────
 #  RECEPÇÃO DE ARQUIVO — GET: servidor → cliente
 #  Com handshake HELLO/HELLO-ACK + tratamento de duplicatas + timeout do receptor
-# ──────────────────────────────────────────────
-
 def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
                     taxa_perda: float = 0.0, pacotes_descartar: list = None):
     """
@@ -191,11 +162,9 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
     if pacotes_descartar:
         print(f"[SIM] Sequências específicas a descartar: {pacotes_descartar}")
 
-    # ══════════════════════════════════════════
     #  FASE 1 — HANDSHAKE GET
     #  Aguarda HELLO do servidor → responde HELLO-ACK
     #  Garante que o cliente está com recvfrom ativo antes dos dados chegarem
-    # ══════════════════════════════════════════
     print(f"[HANDSHAKE] Aguardando HELLO do servidor (ID={id_esperado})...")
     sock.settimeout(10.0)  # Timeout generoso para o servidor processar e iniciar
 
@@ -212,7 +181,7 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
                     if tipo == TIPO_ERROR:
                         msg_erro = msg_bruta[:tam_msg].decode("utf-8") if tam_msg > 0 \
                                    else "Arquivo nao encontrado no servidor."
-                        print(f"\n[❌ ERRO DO SERVIDOR] {msg_erro}")
+                        print(f"\n[ERRO DO SERVIDOR] {msg_erro}")
                         sock.settimeout(None)
                         return False
 
@@ -229,10 +198,8 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
             print("[ERRO] Timeout aguardando HELLO do servidor. Verifique se o servidor está ativo.")
             sock.settimeout(None)
             return False
-
-    # ══════════════════════════════════════════
+        
     #  FASE 2 — RECEPÇÃO DOS DADOS + TIMEOUT DO RECEPTOR
-    # ══════════════════════════════════════════
     print(f"[RX] Recebendo dados (ID={id_esperado})...")
 
     while True:
@@ -247,7 +214,7 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
                 if id_arq == id_esperado and tipo == TIPO_ERROR:
                     msg_erro = msg_bruta[:tam_msg].decode("utf-8") if tam_msg > 0 \
                                else "Erro desconhecido no servidor."
-                    print(f"\n[❌ ERRO DO SERVIDOR] {msg_erro}")
+                    print(f"\n[ERRO DO SERVIDOR] {msg_erro}")
                     sock.settimeout(None)
                     return False
                 continue
@@ -373,11 +340,7 @@ def receber_arquivo(sock, id_esperado, pasta_destino, nome_original,
 
     return True
 
-
-# ──────────────────────────────────────────────
 #  CONFIGURAÇÃO INICIAL
-# ──────────────────────────────────────────────
-
 print("=" * 55)
 print("  Cliente UDP — Transferência de Arquivos Confiável")
 print("=" * 55)
@@ -395,11 +358,7 @@ os.makedirs("cliente", exist_ok=True)
 print(f"\n[OK] Servidor: {IP_SERVIDOR}:{PORTA_SERVIDOR}")
 print(f"     Arquivos baixados salvos em: ./cliente/")
 
-
-# ──────────────────────────────────────────────
 #  LOOP PRINCIPAL
-# ──────────────────────────────────────────────
-
 while True:
     print("\n" + "─" * 50)
     print(" [1] POST — Enviar arquivo ao servidor")
@@ -501,7 +460,7 @@ while True:
                 elif tipo_resp == TIPO_ERROR:
                     tam_msg_r = tam_msg
                     msg_erro  = msg_bruta[:tam_msg_r].decode("utf-8") if tam_msg_r > 0 else "Erro desconhecido."
-                    print(f"[❌ ERRO DO SERVIDOR] {msg_erro}")
+                    print(f"[ERRO DO SERVIDOR] {msg_erro}")
                 else:
                     print(f"[AVISO] Resposta inesperada (tipo={tipo_resp}).")
 
